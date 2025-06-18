@@ -1,111 +1,101 @@
-import tkinter as tk
-from tkinter import filedialog, messagebox
-from tkinterdnd2 import DND_FILES, TkinterDnD
 from PIL import Image
-import numpy as np
-import os
 
 def text_to_bin(text):
     return ''.join(format(ord(char), '08b') for char in text)
 
 def bin_to_text(binary):
     chars = [binary[i:i+8] for i in range(0, len(binary), 8)]
-    return ''.join(chr(int(char, 2)) for char in chars)
+    return ''.join([chr(int(char, 2)) for char in chars])
 
-def hide_text(image_path, message, output_path):
-    img = Image.open(image_path).convert('RGB')
-    data = np.array(img)
+def encode_image(input_path, message, output_path):
+    img = Image.open(input_path)
+    if img.mode != 'RGB':
+        img = img.convert('RGB')
 
-    bin_message = text_to_bin(message) + '1111111111111110'  # End marker
-    msg_index = 0
+    binary = text_to_bin(message) + '1111111111111110'  # EOF marker
+    pixels = list(img.getdata())
 
-    for row in data:
-        for pixel in row:
-            for i in range(3):
-                if msg_index < len(bin_message):
-                    pixel[i] = pixel[i] & ~1 | int(bin_message[msg_index])
-                    msg_index += 1
+    new_pixels = []
+    bin_index = 0
 
-    encoded_img = Image.fromarray(data)
-    encoded_img.save(output_path, format='PNG')
+    for pixel in pixels:
+        r, g, b = pixel
+        if bin_index < len(binary):
+            r = r & ~1 | int(binary[bin_index])
+            bin_index += 1
+        if bin_index < len(binary):
+            g = g & ~1 | int(binary[bin_index])
+            bin_index += 1
+        if bin_index < len(binary):
+            b = b & ~1 | int(binary[bin_index])
+            bin_index += 1
+        new_pixels.append((r, g, b))
+    img.putdata(new_pixels)
+    img.save(output_path)
 
-def extract_text(image_path):
-    img = Image.open(image_path)
-    data = np.array(img)
+def decode_image(stego_path):
+    img = Image.open(stego_path)
+    pixels = list(img.getdata())
 
     binary = ''
-    for row in data:
-        for pixel in row:
-            for i in range(3):
-                binary += str(pixel[i] & 1)
-                if binary[-16:] == '1111111111111110':
-                    return bin_to_text(binary[:-16])
-    return ""
+    for pixel in pixels:
+        for color in pixel:
+            binary += str(color & 1)
+    end_marker = '1111111111111110'
+    if end_marker in binary:
+        binary = binary[:binary.find(end_marker)]
+    return bin_to_text(binary)
 
-class StegApp:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("Steganography Project - Abhijit Modak")
-        self.image_path = ""
 
-        self.label = tk.Label(root, text="Enter your secret message:")
-        self.label.pack()
 
-        self.message_entry = tk.Entry(root, width=50)
-        self.message_entry.pack()
 
-        self.browse_btn = tk.Button(root, text="Select Image", command=self.select_image)
-        self.browse_btn.pack()
 
-        self.image_label = tk.Label(root, text="No image selected")
-        self.image_label.pack()
 
-        self.drop_label = tk.Label(root, text="Or drag and drop image here", fg="blue")
-        self.drop_label.pack()
-        self.drop_label.drop_target_register(DND_FILES)
-        self.drop_label.dnd_bind("<<Drop>>", self.drop_image)
+import tkinter as tk
+from tkinter import filedialog, messagebox
+from stego_utils import encode_image, decode_image
 
-        self.encode_btn = tk.Button(root, text="Encode & Save", command=self.encode)
-        self.encode_btn.pack()
+def browse_image():
+    path = filedialog.askopenfilename()
+    entry_img.delete(0, tk.END)
+    entry_img.insert(0, path)
 
-        self.decode_btn = tk.Button(root, text="Decode Message", command=self.decode)
-        self.decode_btn.pack()
+def encode():
+    input_path = entry_img.get()
+    message = text_box.get("1.0", tk.END).strip()
+    output_path = "encoded_image.png"
+    try:
+        encode_image(input_path, message, output_path)
+        messagebox.showinfo("Success", f"Message encoded into {output_path}")
+    except Exception as e:
+        messagebox.showerror("Error", str(e))
 
-    def select_image(self):
-        path = filedialog.askopenfilename(filetypes=[("Image Files", "*.png *.jpg *.jpeg")])
-        if path:
-            self.image_path = path
-            self.image_label.config(text=os.path.basename(path))
+def decode():
+    input_path = entry_img.get()
+    try:
+        msg = decode_image(input_path)
+        output_box.delete("1.0", tk.END)
+        output_box.insert(tk.END, msg)
+    except Exception as e:
+        messagebox.showerror("Error", str(e))
 
-    def drop_image(self, event):
-        path = event.data.strip('{}')
-        if path.lower().endswith(('.png', '.jpg', '.jpeg')):
-            self.image_path = path
-            self.image_label.config(text=os.path.basename(path), fg="black")
-        else:
-            messagebox.showerror("Error", "Unsupported file type")
+app = tk.Tk()
+app.title("Image Steganography")
 
-    def encode(self):
-        if not self.image_path:
-            messagebox.showwarning("Warning", "No image selected")
-            return
-        message = self.message_entry.get()
-        if not message:
-            messagebox.showwarning("Warning", "No message entered")
-            return
-        save_path = filedialog.asksaveasfilename(defaultextension=".png", filetypes=[("PNG Image", "*.png")])
-        if save_path:
-            hide_text(self.image_path, message, save_path)
-            messagebox.showinfo("Success", "Message hidden and image saved!")
+tk.Label(app, text="Image Path:").pack()
+entry_img = tk.Entry(app, width=50)
+entry_img.pack()
+tk.Button(app, text="Browse", command=browse_image).pack()
 
-    def decode(self):
-        if not self.image_path:
-            messagebox.showwarning("Warning", "No image selected")
-            return
-        hidden_msg = extract_text(self.image_path)
-        messagebox.showinfo("Decoded Message", hidden_msg)
+tk.Label(app, text="Enter message to hide:").pack()
+text_box = tk.Text(app, height=4, width=50)
+text_box.pack()
 
-if __name__ == "__main__":
-    root = TkinterDnD.Tk()
-    app = StegApp(root)
-    root.mainloop()
+tk.Button(app, text="Encode Message", command=encode).pack(pady=5)
+tk.Button(app, text="Decode Message", command=decode).pack(pady=5)
+
+tk.Label(app, text="Decoded Output:").pack()
+output_box = tk.Text(app, height=4, width=50)
+output_box.pack()
+
+app.mainloop()
